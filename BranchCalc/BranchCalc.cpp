@@ -8,10 +8,8 @@
 
 #define _TEST
 
-typedef ADRX	SOLID_ADDRESS;
-
 #ifdef _TEST
-static uint32_t read_mem(SOLID_ADDRESS addr)
+static uint32_t read_mem(uint32_t addr)
 {
     if (addr > 0x20880030 && addr <= 0x20880040) {
 	return addr - 0x30;
@@ -25,13 +23,13 @@ static uint32_t read_mem(SOLID_ADDRESS addr)
     return 0;
 }
 #else
-static uint32_t read_mem(SOLID_ADDRESS addr)
+static uint32_t read_mem(uint32_t addr)
 {
     return peekl_usr(addr);
 }
 #endif
 
-static int inst_ARM_branch_destination(SOLID_ADDRESS addr, uint32_t inst, SOLID_ADDRESS *pnpc)
+static int inst_ARM_branch_destination(uint32_t addr, uint32_t inst, uint32_t *pnpc)
 {
     uint32_t npc;
     int is_direct_branch = 1;
@@ -109,10 +107,10 @@ static uint32_t decode_imm_shift(uint32_t type, uint32_t value, uint32_t imm)
     return value >> imm;
 }
 
-static int inst_ARM_is_indirect_branch(uint32_t inst, SOLID_ADDRESS *npc, struct arm_instr *insn)
+static int inst_ARM_is_indirect_branch(uint32_t inst, uint32_t *npc, struct arm_instr *insn)
 {
     int is_indirect_branch = 1;
-    SOLID_ADDRESS addr;
+    uint32_t addr;
     int Rn, Rm, Rs, imm;
     if ((inst & 0xf0000000) == 0xf0000000) {
 	/* NV space */
@@ -197,10 +195,12 @@ static int inst_ARM_is_indirect_branch(uint32_t inst, SOLID_ADDRESS *npc, struct
 	if (inst & (1 << 24)) {
 	    if (inst & (1 << 23)) {
 		*npc = read_mem(insn->context[Rn] + imm);
-	    } else {
+	    }
+	    else {
 		*npc = read_mem(insn->context[Rn] - imm);
 	    }
-	} else {
+	}
+	else {
 	    *npc = read_mem(insn->context[Rn]);
 	}
     }
@@ -256,7 +256,7 @@ static int is_wide_thumb(uint16_t insthw)
     return (insthw & 0xF800) >= 0xE800;
 }
 
-static int inst_Thumb_branch_destination(SOLID_ADDRESS addr, uint32_t inst, SOLID_ADDRESS *pnpc)
+static int inst_Thumb_branch_destination(uint32_t addr, uint32_t inst, uint32_t *pnpc)
 {
     uint32_t npc;
     int is_direct_branch = 1;
@@ -351,7 +351,7 @@ static int inst_Thumb_is_direct_branch_link(uint32_t inst, struct arm_instr *ins
     return is_direct_branch;
 }
 
-static int inst_Thumb_is_indirect_branch_link(uint32_t inst, SOLID_ADDRESS addr, SOLID_ADDRESS *npc, struct arm_instr *insn)
+static int inst_Thumb_is_indirect_branch_link(uint32_t inst, uint32_t addr, uint32_t *npc, struct arm_instr *insn)
 {
     /* See e.g. PFT Table 2-3 and Table 2-5 */
     int is_branch = 1;
@@ -460,9 +460,9 @@ static uint8_t inst_Thumb_is_IT(uint32_t inst)
     }
 }
 
-SOLID_ADDRESS calc_next_branch_addr(SOLID_ADDRESS addr, uint32_t opcode, int is_thumb, struct arm_instr *insn)
+uint32_t calc_next_branch_addr(uint32_t addr, uint32_t opcode, int is_thumb, struct arm_instr *insn)
 {
-    SOLID_ADDRESS branchAddr = addr;
+    uint32_t branchAddr = addr;
     uint32_t instr_size = 4;
 
     insn->link = 0;
@@ -534,7 +534,7 @@ SOLID_ADDRESS calc_next_branch_addr(SOLID_ADDRESS addr, uint32_t opcode, int is_
 
 int main()
 {
-    SOLID_ADDRESS addr;
+    uint32_t addr;
     struct arm_instr instr;
     instr.context[0] = 0x20880000;
     instr.context[1] = 0x8;
@@ -555,7 +555,7 @@ int main()
     CHECK_ARM(instr, 0xE594F008, 0x20880004, 0);    /* ldr pc, [r4, #8] */
     CHECK_ARM(instr, 0xE89D800F, 0x20880010, 0);    /* ldmia sp, {r0-r3, pc} */
 
-    //CHECK(instr, 0xEB000F51, 0x20880008)    /* add pc, r0, r1, lsr #1 */
+						    //CHECK(instr, 0xEB000F51, 0x20880008)    /* add pc, r0, r1, lsr #1 */
 
     return 0;
 }
