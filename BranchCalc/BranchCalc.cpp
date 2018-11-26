@@ -11,7 +11,7 @@
 #ifdef _TEST
 static uint32_t read_mem(uint32_t addr)
 {
-    if (addr > 0x20880030 && addr <= 0x20880040) {
+    if (addr >= 0x20880030 && addr <= 0x2088004c) {
 	return addr - 0x30;
     }
     if (addr == 0x20880050) {
@@ -22,10 +22,48 @@ static uint32_t read_mem(uint32_t addr)
     }
     return 0;
 }
+
+static uint16_t read_mem16(uint32_t addr)
+{
+    if (addr >= 0x20880030 && addr <= 0x20880040) {
+	return 0x10;
+    }
+    if (addr == 0x20880050) {
+	return 0x20;
+    }
+    else if (addr == 0x20880058) {
+	return 0x30;
+    }
+    return 0;
+}
+
+static uint8_t read_mem8(uint32_t addr)
+{
+    if (addr >= 0x20880030 && addr <= 0x20880040) {
+	return 0x10;
+    }
+    if (addr == 0x20880050) {
+	return 0x20;
+    }
+    else if (addr == 0x20880058) {
+	return 0x30;
+    }
+    return 0;
+}
 #else
 static uint32_t read_mem(uint32_t addr)
 {
     return peekl_usr(addr);
+}
+
+static uint16_t read_mem16(uint32_t addr)
+{
+    return peekw_usr(addr);
+}
+
+static uint8_t read_mem8(uint32_t addr)
+{
+    return peekw_usr(addr);
 }
 #endif
 
@@ -117,22 +155,23 @@ static int inst_ARM_is_indirect_branch(uint32_t inst, uint32_t *npc, struct arm_
 	if ((inst & 0xfe500000) == 0xf8100000) {
 	    /* RFE */
 	    Rn = extract32(inst, 16, 4);
-	    *npc = insn->context[Rn];
+	    addr = insn->context[Rn];
 	    if (inst & 0x00800000) {
 		/* increment = 1 */
 		if (inst & 0x1000000) {
 		    /* Pre */
-		    *npc += 4;
+		    addr += 4;
 		}
 	    }
 	    else {
 		if (inst & 0x1000000) {
-		    *npc -= 8;
+		    addr -= 8;
 		}
 		else {
-		    *npc -= 4;
+		    addr -= 4;
 		}
 	    }
+	    *npc = read_mem(addr);
 	}
 	else {
 	    is_indirect_branch = 0;
@@ -247,10 +286,10 @@ static int inst_ARM_is_indirect_branch(uint32_t inst, uint32_t *npc, struct arm_
     return is_indirect_branch;
 }
 
-/*
-For Thumb2, test if a halfword is the first half of a 32-bit instruction,
-as opposed to a complete 16-bit instruction.
-*/
+/**
+ *  For Thumb2, test if a halfword is the first half of a 32-bit instruction,
+ *  as opposed to a complete 16-bit instruction.
+ */
 static int is_wide_thumb(uint16_t insthw)
 {
     return (insthw & 0xF800) >= 0xE800;
@@ -355,7 +394,7 @@ static int inst_Thumb_is_indirect_branch_link(uint32_t inst, uint32_t addr, uint
 {
     /* See e.g. PFT Table 2-3 and Table 2-5 */
     int is_branch = 1;
-    int Rm;
+    int Rm, Rn;
 
     if ((inst & 0xff000000) == 0x47000000) {
 	/* BX, BLX (reg) */
@@ -370,21 +409,46 @@ static int inst_Thumb_is_indirect_branch_link(uint32_t inst, uint32_t addr, uint
     }
     else if ((inst & 0xff000000) == 0xbd000000) {
 	/* POP {pc} */
+	*npc = read_mem(insn->context[13]);
     }
     else if ((inst & 0xfd870000) == 0x44870000) {
 	/* MOV PC,reg or ADD PC,reg */
-	if ((inst & 0xffff0000) == 0x46f70000) {
-	    /* MOV PC,LR */
-	}
+	Rm = extract32(inst, 19, 4);
+	*npc = insn->context[Rm];
     }
     else if ((inst & 0xfff0ffe0) == 0xe8d0f000) {
+	uint32_t halfwords;
+	uint32_t parm0, parm1;
 	/* TBB/TBH */
+	Rn = extract32(inst, 16, 4);
+	Rm = extract32(inst, 0, 4);
+	parm0 = insn->context[Rn];
+	parm1 = insn->context[Rm];
+	if (Rn == 15) {
+	    /* TBB/TBH [PC, ...] */
+	    parm0 += 4;
+	}
+	if (inst & 0x00000010) {
+	    /* TBH [<Rn>, <Rm>, LSL #1] */
+	    halfwords = read_mem16(parm0 + (parm1 << 1));
+	}
+	else {
+	    /* TBB [<Rn>, <Rm>] */
+	    halfwords = read_mem8(parm0 + parm1);
+	}
+	*npc = addr + (halfwords << 1);
     }
     else if ((inst & 0xffd00000) == 0xe8100000) {
 	/* RFE (T1) */
+	Rn = extract32(inst, 16, 4);
+	addr = insn->context[Rn];
+	*npc = read_mem(addr - 8);
     }
     else if ((inst & 0xffd00000) == 0xe9900000) {
 	/* RFE (T2) */
+	Rn = extract32(inst, 16, 4);
+	addr = insn->context[Rn];
+	*npc = read_mem(addr);
     }
     else if ((inst & 0xfff0d000) == 0xf3d08000) {
 	/* SUBS PC,LR,#imm inc.ERET */
@@ -467,7 +531,7 @@ uint32_t calc_next_branch_addr(uint32_t addr, uint32_t opcode, int is_thumb, str
 
     insn->link = 0;
     insn->indirect = 0;
-    insn->change_state = 0;
+    insn->change_isa = 0;
     insn->conditional = 0;
     insn->thumb_it_conditions = 0;
 
@@ -476,7 +540,7 @@ uint32_t calc_next_branch_addr(uint32_t addr, uint32_t opcode, int is_thumb, str
 	    inst_Thumb_branch_destination(addr, opcode, &branchAddr);
 	    if ((branchAddr & 0x1) == 0) {
 		/* ターゲットアドレスがARM命令 */
-		insn->change_state = 1;
+		insn->change_isa = 1;
 	    }
 	    else {
 		branchAddr &= ~0x1;
@@ -485,7 +549,7 @@ uint32_t calc_next_branch_addr(uint32_t addr, uint32_t opcode, int is_thumb, str
 	else if (inst_Thumb_is_indirect_branch_link(opcode, addr, &branchAddr, insn)) {
 	    if ((branchAddr & 0x1) == 0) {
 		/* ターゲットアドレスがARM命令 */
-		insn->change_state = 1;
+		insn->change_isa = 1;
 	    }
 	    else {
 		branchAddr &= ~0x1;
@@ -505,7 +569,7 @@ uint32_t calc_next_branch_addr(uint32_t addr, uint32_t opcode, int is_thumb, str
 	    if (branchAddr & 1) {
 		/* ターゲットアドレスがThumb命令 */
 		branchAddr &= ~0x1;
-		insn->change_state = 1;
+		insn->change_isa = 1;
 	    }
 	}
 	else if (inst_ARM_is_direct_branch(opcode)) {
@@ -513,7 +577,7 @@ uint32_t calc_next_branch_addr(uint32_t addr, uint32_t opcode, int is_thumb, str
 	    if (branchAddr & 1) {
 		/* ターゲットアドレスがThumb命令 */
 		branchAddr &= ~0x1;
-		insn->change_state = 1;
+		insn->change_isa = 1;
 	    }
 	    insn->link = inst_ARM_is_branch_and_link(opcode);
 	}
@@ -552,7 +616,7 @@ int main()
     instr.context[14] = 0x2088000C;
     instr.context[15] = 0x20880000;
 
-    /*        arm_instr, code, addr, pc */
+    /*    arm_instr,       code,       addr, pc */
     CHECK_ARM(instr, 0xE080F001, 0x20880008, 0);    /* add pc, r0, r1 */
     CHECK_ARM(instr, 0xE080F101, 0x20880020, 0);    /* add pc, r0, r1, lsl #1 */
     CHECK_ARM(instr, 0xE12FFF1A, 0x20880008, 0);    /* bx r10 */
@@ -562,10 +626,14 @@ int main()
     CHECK_ARM(instr, 0xE494F008, 0x20880000, 0);    /* ldr pc, [r4], #8 */
     CHECK_ARM(instr, 0xE594F008, 0x20880004, 0);    /* ldr pc, [r4, #8] */
     CHECK_ARM(instr, 0xE89D800F, 0x20880010, 0);    /* ldmia sp, {r0-r3, pc} */
+    CHECK_ARM(instr, 0xF8130A00, 0x2088001C, 0);    /* rfeda r3 */
 
-    CHECK_THUMB(instr, 0x47700000, 0x2088000C, 0);  /* BX  lr */
-    CHECK_THUMB(instr, 0x47980000, 0x20880050, 0);  /* BLX r3 */
-
+    CHECK_THUMB(instr, 0x47700000, 0x2088000C, 0);        /* BX  lr */
+    CHECK_THUMB(instr, 0x47980000, instr.context[3], 0);  /* BLX r3 */
+    CHECK_THUMB(instr, 0xBD000000, 0x20880000, 0);        /* pop {pc} */
+    CHECK_THUMB(instr, 0x46f70000, instr.context[14], 0); /* mov pc, lr */
+    CHECK_THUMB(instr, 0xE993C000, 0x20880000, 0);        /* rfeia r3 */
+    CHECK_THUMB(instr, 0xE813C000, 0x20880018, 0);        /* rfedb r3 */
 
     return 0;
 }

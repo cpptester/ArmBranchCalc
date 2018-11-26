@@ -9,7 +9,7 @@ struct arm_instr
 {
     uint8_t link;		/* link付きブランチ命令か */
     uint8_t indirect;		/* 間接ブランチか */
-    uint8_t change_state;	/* 命令ステートが変更される ARM<->Thumb */
+    uint8_t change_isa;	        /* 命令ステートが変更される ARM<->Thumb */
     uint8_t conditional;
     uint8_t thumb_it_conditions;
     uint32_t context[16];
