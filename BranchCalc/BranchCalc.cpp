@@ -355,14 +355,14 @@ static int inst_Thumb_is_indirect_branch_link(uint32_t inst, uint32_t addr, uint
 {
     /* See e.g. PFT Table 2-3 and Table 2-5 */
     int is_branch = 1;
+    int Rm;
 
     if ((inst & 0xff000000) == 0x47000000) {
 	/* BX, BLX (reg) */
+	Rm = extract32(inst, 19, 4);
+	*npc = insn->context[Rm];
 	if (inst & 0x00800000) {
 	    insn->link = 1;
-	}
-	else if ((inst & 0x00780000) == 0x00700000) {
-	    /* BX LR */
 	}
     }
     else if ((inst & 0xfff0d000) == 0xf3c08000) {
@@ -529,7 +529,14 @@ uint32_t calc_next_branch_addr(uint32_t addr, uint32_t opcode, int is_thumb, str
     I.context[15] = pc; \
     addr = calc_next_branch_addr(pc, code, 0, &instr); \
     if (addr != validaddr) {   \
-        printf("Wrong address calculation, 0x%08x. valid addr is 0x%08x", addr, validaddr); \
+        printf("Wrong address calculation, 0x%08x. The valid addr is 0x%08x", addr, validaddr); \
+    }
+
+#define CHECK_THUMB(I, code, validaddr, pc) \
+    I.context[15] = pc; \
+    addr = calc_next_branch_addr(pc, code, 1, &instr); \
+    if (addr != validaddr) {   \
+        printf("Wrong address calculation, 0x%08x. The valid addr is 0x%08x", addr, validaddr); \
     }
 
 int main()
@@ -545,6 +552,7 @@ int main()
     instr.context[14] = 0x2088000C;
     instr.context[15] = 0x20880000;
 
+    /*        arm_instr, code, addr, pc */
     CHECK_ARM(instr, 0xE080F001, 0x20880008, 0);    /* add pc, r0, r1 */
     CHECK_ARM(instr, 0xE080F101, 0x20880020, 0);    /* add pc, r0, r1, lsl #1 */
     CHECK_ARM(instr, 0xE12FFF1A, 0x20880008, 0);    /* bx r10 */
@@ -555,8 +563,9 @@ int main()
     CHECK_ARM(instr, 0xE594F008, 0x20880004, 0);    /* ldr pc, [r4, #8] */
     CHECK_ARM(instr, 0xE89D800F, 0x20880010, 0);    /* ldmia sp, {r0-r3, pc} */
 
-						    //CHECK(instr, 0xEB000F51, 0x20880008)    /* add pc, r0, r1, lsr #1 */
+    CHECK_THUMB(instr, 0x47700000, 0x2088000C, 0);  /* BX  lr */
+    CHECK_THUMB(instr, 0x47980000, 0x20880050, 0);  /* BLX r3 */
+
 
     return 0;
 }
-
